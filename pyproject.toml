@@ -32,7 +32,7 @@ dependencies = ["fonttools>=4.40"]
 llm = ["pydantic>=2.0"]
 verify = ["pikepdf>=8.0"]
 signing = ["cryptography>=41.0"]
-dev = ["pytest>=7.4", "pikepdf>=8.0", "pydantic>=2.0", "cryptography>=41.0", "mypy>=1.8", "ruff>=0.3"]
+dev = ["pytest>=9.1.1", "pikepdf>=8.0", "pydantic>=2.0", "cryptography>=41.0", "mypy>=2.3.0", "ruff>=0.16.0"]
 all = ["pydantic>=2.0", "pikepdf>=8.0", "cryptography>=41.0"]
 
 [project.scripts]
