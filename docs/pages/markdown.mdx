@@ -1,0 +1,118 @@
+---
+title: Markdown Input
+description: The Markdown surface accepted by Document.from_markdown
+---
+
+import { Callout } from 'nextra/components'
+
+# Markdown Input
+
+`Document.from_markdown` converts standard Markdown into Emboss elements, so natural LLM output renders as a high-quality PDF without schema wrangling:
+
+```python
+from emboss import Document
+
+doc = Document.from_markdown(md_text, style="corporate")
+doc.save("output.pdf")
+```
+
+Keyword arguments pass through to the Document constructor. If no `title` is given, the first level-1 heading becomes the title. `parse_markdown(text)` returns the element list directly.
+
+## Front matter
+
+A leading `---`-delimited block of flat `key: value` lines supplies document metadata; explicit `Document.from_markdown(**kw)` keyword arguments win over it:
+
+```markdown
+---
+title: Quarterly Report
+author: Finance Team
+style: finance
+toc: true
+---
+
+# Executive Summary
+...
+```
+
+String fields: `title`, `author`, `subject`, `keywords`, `style`, `language`, `color_mode` (`rgb` or `cmyk`). Boolean fields: `toc`, `number_sections`, `page_numbers`. Values are parsed as flat YAML scalars (quoted or bare strings, `true`/`false`/`yes`/`no`/`on`/`off`, ints, floats). An unrecognized key, or a non-boolean value given for a boolean field, is dropped and recorded as a warning rather than applied; a line that isn't valid `key: value` syntax at all makes the whole block fall back to being parsed as literal Markdown (the `---` delimiters included) instead of guessing. `parse_front_matter(text)` returns a `FrontMatter` with `.fields`, `.warnings`, and the remaining `.body` directly, if you want to inspect it without rendering.
+
+## Block constructs
+
+| Construct | Syntax | Maps to |
+|-----------|--------|---------|
+| Headings | `# ...` through `###### ...` (ATX), and setext (`===` / `---` underlines) | `Heading` 1-6 |
+| Paragraphs | consecutive lines | `Paragraph` |
+| Bullet lists | `-`, `*`, `+`, nested by indentation | `BulletList` (nested levels get distinct markers) |
+| Numbered lists | `1.` or `1)`, nested by indentation | `NumberedList` (nested levels switch to alpha markers) |
+| Task lists | `- [ ]` / `- [x]` | `BulletList` with drawn checkboxes |
+| Tables | pipe tables with a separator row | `Table`; `:---:` alignment respected, cells parsed inline |
+| Fenced code | ` ```lang ` | `CodeBlock` with the language tag |
+| Fenced diagrams | ` ```diagram ` (node/edge line syntax) | Rendered diagram `SvgBlock`, see [Diagrams](/diagrams) |
+| Math blocks | `$$ ... $$` | `MathBlock` |
+| Blockquotes | `> ...` (lazy continuation lines included) | `BlockQuote` with accent bar |
+| Callouts | `> [!NOTE]`, `[!TIP]`, `[!WARNING]`, `[!CAUTION]`, `[!IMPORTANT]` | `Callout` |
+| Footnotes | `[^1]` references with `[^1]: ...` definitions | `Footnote`, emitted after the referencing block |
+| Images | `![alt](path)` on its own line | `Image` (alt text doubles as caption) |
+| Horizontal rules | `---`, `***`, `___` | `HorizontalRule` |
+| Page breaks | `\newpage` or `---pagebreak---` | `PageBreak` |
+
+Link and footnote definitions are pre-scanned out of the block flow, so reference-style links work regardless of where the definition appears (except inside code fences, which are left alone).
+
+## Inline constructs
+
+| Construct | Syntax |
+|-----------|--------|
+| Bold, italic, bold-italic | `**b**`, `*i*`, `***bi***` (also `_` delimiters) |
+| Code spans | `` `code` `` (set in Courier) |
+| Strikethrough | `~~text~~` |
+| Links | inline `[label](url)`, reference `[label][ref]`, autolinks `<https://...>` |
+| Backslash escapes | `\*`, `\_`, `` \` ``, `\$`, `\[`, `\]`, `\~`, and other markers |
+| Inline math | `$x^2$` (rendered italic; a paragraph that is only math is promoted to a `MathBlock`) |
+| Inline images | `![alt](path)` (reduced to the alt text) |
+
+Formatting nests: a bold span inside a link keeps both, and table cells accept the full inline syntax.
+
+<Callout type="info">
+Not supported, by design: multi-paragraph list items and raw HTML
+passthrough. Both are left as literal text rather than silently
+restructured.
+</Callout>
+
+## Include-from-source
+
+A code block can load its content from a source file instead of being typed inline, so a documented example cannot silently drift from the code it describes:
+
+````markdown
+```python file=examples/settle.py lines=10-20
+```
+````
+
+The info string after the language accepts `file=PATH` with either `lines=A-B` (a 1-based inclusive range) or `marker=NAME` (the text between `# region NAME` / `# endregion`, or `# BEGIN NAME` / `# END NAME`, recognizing the common comment leaders for several languages). The selected text is dedented and rendered through the normal syntax highlighter for the block's language. A missing file, an out-of-range line span, or an unmatched marker raises `IncludeError`; inside `parse_markdown` this degrades to a code block plus a warning unless `strict=True`.
+
+Relative `file=` paths resolve against `base_dir`, an optional keyword to `parse_markdown(text, base_dir=...)` (default: the current working directory). `emboss build` (below) resolves each file's includes against that Markdown file's own directory automatically.
+
+```python
+from emboss import include_source
+
+code = include_source("examples/settle.py", lines="10-20")
+code = include_source("examples/settle.py", marker="handler")
+```
+
+## Building a directory of Markdown
+
+A documentation team adds a build step rather than calling an API. `emboss build` concatenates every Markdown file in a directory, in order, into one tagged PDF:
+
+```bash
+emboss build ./docs -o handbook.pdf
+```
+
+Order is alphabetical by default, so numeric prefixes (`01-intro.md`, `02-setup.md`, ...) work without configuration; an optional `.order` file in the directory (one file name per line, `#`-comments and blank lines ignored) sets an explicit order instead. The first file's front matter supplies the document title and style unless overridden with `--title`/`--style`. A page break is inserted between files by default (`--no-page-breaks` to disable), and a table of contents is added by default (`--no-toc` to disable).
+
+```python
+from emboss import build_from_directory
+
+doc = build_from_directory("./docs", title="Handbook", toc=True)
+doc.save("handbook.pdf")
+```
+
+`ordered_markdown_files(directory, order=None)` returns the resolved file list, if you want the ordering logic without building.

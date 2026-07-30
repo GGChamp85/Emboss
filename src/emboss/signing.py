@@ -7,23 +7,35 @@ Provides:
 
 The visual appearance is always available. Actual signing requires::
 
-    pip install emboss[signing]
+    pip install emboss-pdf[signing]
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .pdf.objects import PdfArray, PdfDict, PdfName, PdfRef, PdfStream
+from .pdf.objects import PdfArray, PdfDict, PdfName, PdfRef
 
 __all__ = [
     "SignatureField",
     "build_signature_appearance",
+    "build_docmdp_reference",
     "build_sig_field_dict",
+    "build_certifying_signature",
+    "build_perms_dict",
     "build_acroform",
     "can_sign",
     "sign_pdf",
 ]
+
+#: Byte length of the ``/Contents`` signature placeholder (raw DER bytes).
+_CONTENTS_PLACEHOLDER_BYTES = 8192
+#: The placeholder as it actually appears in serialized PDF bytes: bytes
+#: assigned directly into a ``PdfDict`` always serialize as an ASCII hex
+#: string (see ``pdf.objects.serialize``), so a zero-filled Contents value
+#: is a run of ASCII '0' characters bracketed by ``<`` and ``>``, not raw
+#: NUL bytes.
+_CONTENTS_HEX_PLACEHOLDER = b"<" + b"0" * (_CONTENTS_PLACEHOLDER_BYTES * 2) + b">"
 
 
 @dataclass
@@ -46,17 +58,42 @@ def build_signature_appearance(
     sig: SignatureField,
     font_key: str,
     font_size: float,
+    color_mode: str = "rgb",
 ) -> None:
     """Draw the visual signature field appearance on a page stream.
 
     Renders a bordered rectangle with a light background and text
-    showing the signer details.
+    showing the signer details. ``color_mode`` defaults to the stream's
+    own mode; pass ``"cmyk"`` explicitly to force DeviceCMYK operators.
     """
+    mode = _effective_mode(stream, color_mode)
+    previous = getattr(stream, "color_mode", None)
+    override = previous is not None and previous != mode
+    if override:
+        stream.color_mode = mode
+    try:
+        _draw_appearance(stream, sig, font_key, font_size, mode)
+    finally:
+        if override:
+            stream.color_mode = previous
+
+
+def _draw_appearance(
+    stream,
+    sig: SignatureField,
+    font_key: str,
+    font_size: float,
+    mode: str,
+) -> None:
+    """Emit the signature appearance rectangle and text for one field."""
     stream.begin_artifact("Signature")
 
     # Background
     stream.rect(
-        sig.x, sig.y, sig.width, sig.height,
+        sig.x,
+        sig.y,
+        sig.width,
+        sig.height,
         fill="f5f5f4",
         stroke="a8a29e",
         line_width=0.75,
@@ -69,7 +106,7 @@ def build_signature_appearance(
 
     stream.raw(b"BT")
     stream.raw(f"/{font_key} {label_size:.2f} Tf".encode("ascii"))
-    stream.raw(b"0.4 0.4 0.4 rg")
+    stream.raw(_gray_fill_op(0.4, mode))
     stream.raw(f"{text_x:.4f} {text_y:.4f} Td".encode("ascii"))
     stream.raw(_escape_text("Digitally Signed") + b" Tj")
     stream.raw(b"ET")
@@ -79,7 +116,7 @@ def build_signature_appearance(
         text_y -= label_size + 3.0
         stream.raw(b"BT")
         stream.raw(f"/{font_key} {font_size:.2f} Tf".encode("ascii"))
-        stream.raw(b"0.1 0.1 0.1 rg")
+        stream.raw(_gray_fill_op(0.1, mode))
         stream.raw(f"{text_x:.4f} {text_y:.4f} Td".encode("ascii"))
         stream.raw(_escape_text(sig.signer_name) + b" Tj")
         stream.raw(b"ET")
@@ -89,7 +126,7 @@ def build_signature_appearance(
         text_y -= label_size + 2.0
         stream.raw(b"BT")
         stream.raw(f"/{font_key} {label_size:.2f} Tf".encode("ascii"))
-        stream.raw(b"0.35 0.35 0.35 rg")
+        stream.raw(_gray_fill_op(0.35, mode))
         stream.raw(f"{text_x:.4f} {text_y:.4f} Td".encode("ascii"))
         stream.raw(_escape_text(f"Reason: {sig.reason}") + b" Tj")
         stream.raw(b"ET")
@@ -99,7 +136,7 @@ def build_signature_appearance(
         text_y -= label_size + 2.0
         stream.raw(b"BT")
         stream.raw(f"/{font_key} {label_size:.2f} Tf".encode("ascii"))
-        stream.raw(b"0.35 0.35 0.35 rg")
+        stream.raw(_gray_fill_op(0.35, mode))
         stream.raw(f"{text_x:.4f} {text_y:.4f} Td".encode("ascii"))
         stream.raw(_escape_text(f"Location: {sig.location}") + b" Tj")
         stream.raw(b"ET")
@@ -107,17 +144,51 @@ def build_signature_appearance(
     stream.end_marked()
 
 
-def build_sig_field_dict(
-    assembler,
-    sig: SignatureField,
-    page_ref: PdfRef,
-    appearance_ref: PdfRef | None = None,
-) -> PdfRef:
-    """Create an AcroForm signature field dictionary.
+def _effective_mode(stream, color_mode: str) -> str:
+    """Resolve the color mode: explicit override wins, else the stream's."""
+    if color_mode != "rgb":
+        return color_mode
+    return getattr(stream, "color_mode", "rgb") or "rgb"
 
-    Returns a reference to the signature field object. The caller must
-    add it to the page's /Annots array and to the document's AcroForm.
+
+def _gray_fill_op(level: float, mode: str) -> bytes:
+    """Encode a gray fill-color operator for the given mode (rg or k)."""
+    if mode == "cmyk":
+        return f"0 0 0 {1.0 - level:g} k".encode("ascii")
+    return f"{level:g} {level:g} {level:g} rg".encode("ascii")
+
+
+def build_docmdp_reference(permission: int) -> PdfDict:
+    """Build a /DocMDP transform-reference dict for a certifying signature.
+
+    Placed in the signature value dictionary's /Reference array so the
+    signature functions as a PDF certification signature (ISO 32000-1
+    12.8.2.3). ``permission`` is the /DocMDP /P value: 1 forbids any
+    further changes, 2 permits form fill-in and further signing (the
+    default), 3 additionally permits annotations.
     """
+    if permission not in (1, 2, 3):
+        raise ValueError(f"docmdp_permission must be 1, 2, or 3; got {permission!r}")
+
+    transform_params = PdfDict()
+    transform_params["Type"] = PdfName("TransformParams")
+    transform_params["P"] = permission
+    transform_params["V"] = PdfName("1.2")
+
+    reference = PdfDict()
+    reference["Type"] = PdfName("SigRef")
+    reference["TransformMethod"] = PdfName("DocMDP")
+    reference["TransformParams"] = transform_params
+    return reference
+
+
+def _build_sig_value_dict(
+    sig: SignatureField,
+    *,
+    certify: bool = False,
+    docmdp_permission: int = 2,
+) -> PdfDict:
+    """Build the /V signature value dictionary shared by field builders."""
     sig_value = PdfDict()
     sig_value["Type"] = PdfName("Sig")
     sig_value["Filter"] = PdfName("Adobe.PPKLite")
@@ -129,9 +200,20 @@ def build_sig_field_dict(
     if sig.location:
         sig_value["Location"] = sig.location
     sig_value["M"] = "D:20240101000000Z"
-    sig_value["Contents"] = b"\x00" * 8192  # placeholder for actual signature
-    sig_value_ref = assembler.add(sig_value)
+    sig_value["Contents"] = b"\x00" * _CONTENTS_PLACEHOLDER_BYTES
+    if certify:
+        sig_value["Reference"] = PdfArray([build_docmdp_reference(docmdp_permission)])
+    return sig_value
 
+
+def _build_field_dict(
+    assembler,
+    sig: SignatureField,
+    page_ref: PdfRef,
+    sig_value_ref: PdfRef,
+    appearance_ref: PdfRef | None,
+) -> PdfRef:
+    """Build the /Widget annotation wrapping a signature value; return its ref."""
     rect = PdfArray([sig.x, sig.y, sig.x + sig.width, sig.y + sig.height])
 
     field = PdfDict()
@@ -152,13 +234,98 @@ def build_sig_field_dict(
     return assembler.add(field)
 
 
-def build_acroform(sig_field_refs: list[PdfRef]) -> PdfDict:
+def build_sig_field_dict(
+    assembler,
+    sig: SignatureField,
+    page_ref: PdfRef,
+    appearance_ref: PdfRef | None = None,
+    *,
+    certify: bool = False,
+    docmdp_permission: int = 2,
+) -> PdfRef:
+    """Create an AcroForm signature field dictionary.
+
+    Returns a reference to the signature field object. The caller must
+    add it to the page's /Annots array and to the document's AcroForm.
+
+    ``certify=True`` marks this as the document's DocMDP certification
+    signature (ISO 32000-1 12.8.2.3): its /V dictionary gets a
+    /Reference array with a /DocMDP transform whose /P is
+    ``docmdp_permission``. A certification signature must be the
+    document's first signature -- pass this field's ref as
+    ``build_acroform``'s ``certifying_ref`` to enforce that ordering --
+    and the catalog's /Perms/DocMDP must point at its /V dictionary; use
+    ``build_certifying_signature`` instead of this function if you need
+    that /Perms dict handed back to you.
+    """
+    sig_value = _build_sig_value_dict(
+        sig, certify=certify, docmdp_permission=docmdp_permission
+    )
+    sig_value_ref = assembler.add(sig_value)
+    return _build_field_dict(assembler, sig, page_ref, sig_value_ref, appearance_ref)
+
+
+def build_certifying_signature(
+    assembler,
+    sig: SignatureField,
+    page_ref: PdfRef,
+    appearance_ref: PdfRef | None = None,
+    docmdp_permission: int = 2,
+) -> tuple[PdfRef, PdfDict]:
+    """Build a DocMDP certification signature field and its /Perms dict.
+
+    Equivalent to ``build_sig_field_dict(..., certify=True,
+    docmdp_permission=docmdp_permission)`` except it also returns the
+    /Perms dict the caller must merge into the document catalog
+    (``catalog["Perms"] = perms``), which ISO 32000-1 12.8.2.3 requires
+    for the certification to be recognized. Returns ``(field_ref,
+    perms)``; also pass ``field_ref`` as ``build_acroform``'s
+    ``certifying_ref`` so it is placed first in /AcroForm/Fields.
+    """
+    sig_value = _build_sig_value_dict(
+        sig, certify=True, docmdp_permission=docmdp_permission
+    )
+    sig_value_ref = assembler.add(sig_value)
+    field_ref = _build_field_dict(
+        assembler, sig, page_ref, sig_value_ref, appearance_ref
+    )
+    return field_ref, build_perms_dict(sig_value_ref)
+
+
+def build_perms_dict(sig_value_ref: PdfRef) -> PdfDict:
+    """Build the document catalog's /Perms dict for a DocMDP certification.
+
+    ``sig_value_ref`` is the certifying signature's /V dictionary ref
+    (the second element ``build_certifying_signature`` returns, or the
+    ref you passed as a certifying field's ``sig_value_ref``). Merge the
+    result into the catalog: ``catalog["Perms"] = build_perms_dict(...)``.
+    """
+    perms = PdfDict()
+    perms["DocMDP"] = sig_value_ref
+    return perms
+
+
+def build_acroform(
+    sig_field_refs: list[PdfRef], *, certifying_ref: PdfRef | None = None
+) -> PdfDict:
     """Build an AcroForm dictionary for the document catalog.
 
-    The caller adds this under catalog['AcroForm'].
+    The caller adds this under catalog['AcroForm']. When *certifying_ref*
+    is given (the field ref for a DocMDP certification signature built
+    with ``certify=True``), it is moved to the front of /Fields if not
+    already there, since ISO 32000-1 requires a certification signature
+    be the document's first signature; raises ValueError if it isn't one
+    of *sig_field_refs*.
     """
+    fields = list(sig_field_refs)
+    if certifying_ref is not None:
+        if certifying_ref not in fields:
+            raise ValueError("certifying_ref must be one of sig_field_refs")
+        fields.remove(certifying_ref)
+        fields.insert(0, certifying_ref)
+
     acroform = PdfDict()
-    acroform["Fields"] = PdfArray(sig_field_refs)
+    acroform["Fields"] = PdfArray(fields)
     acroform["SigFlags"] = 3  # SignaturesExist + AppendOnly
     return acroform
 
@@ -167,9 +334,59 @@ def can_sign() -> bool:
     """Check whether the ``cryptography`` package is available."""
     try:
         import cryptography  # noqa: F401
+
         return True
     except ImportError:
         return False
+
+
+def _verify_docmdp_certification(pdf_bytes: bytes, expected_permission: int) -> None:
+    """Raise ValueError unless the PDF's first signature field certifies.
+
+    Checked via pikepdf against the pre-signing bytes: the first
+    /AcroForm field must be a /Sig field whose /V carries a /DocMDP
+    /Reference transform matching ``expected_permission``. Build that
+    structure with ``build_sig_field_dict(..., certify=True, ...)`` or
+    ``build_certifying_signature`` before calling ``sign_pdf(...,
+    certify=True, ...)``.
+    """
+    try:
+        import pikepdf
+    except ImportError:
+        raise ImportError(
+            "sign_pdf(certify=True) requires the 'pikepdf' package.\n"
+            "  pip install emboss-pdf[verify]"
+        ) from None
+
+    import io
+
+    with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
+        acroform = pdf.Root.get("/AcroForm")
+        if acroform is None or "/Fields" not in acroform or len(acroform.Fields) == 0:
+            raise ValueError("certify=True requires a signature field; none found")
+        sig_field = acroform.Fields[0]
+        if str(sig_field.get("/FT", "")) != "/Sig":
+            raise ValueError(
+                "certify=True requires the first /AcroForm field to be the "
+                "signature field being certified"
+            )
+        sig_value = sig_field.get("/V")
+        reference = sig_value.get("/Reference") if sig_value is not None else None
+        if not reference:
+            raise ValueError(
+                "certify=True requires a /DocMDP /Reference transform on the "
+                "signature field; build it with build_sig_field_dict("
+                "certify=True, ...) or build_certifying_signature(...)"
+            )
+        transform = reference[0]
+        if str(transform.get("/TransformMethod", "")) != "/DocMDP":
+            raise ValueError("first /Reference entry is not a /DocMDP transform")
+        found_permission = int(transform["/TransformParams"]["/P"])
+        if found_permission != expected_permission:
+            raise ValueError(
+                f"DocMDP /P mismatch: the field declares {found_permission}, "
+                f"but docmdp_permission={expected_permission} was requested"
+            )
 
 
 def sign_pdf(
@@ -177,10 +394,13 @@ def sign_pdf(
     private_key_path: str,
     cert_path: str,
     password: bytes | None = None,
+    *,
+    certify: bool = False,
+    docmdp_permission: int = 2,
 ) -> bytes:
     """Sign a PDF with a PKCS#7 detached signature.
 
-    Requires ``pip install emboss[signing]``.
+    Requires ``pip install emboss-pdf[signing]``.
 
     Parameters
     ----------
@@ -192,6 +412,20 @@ def sign_pdf(
         Path to a PEM-encoded X.509 certificate file.
     password : bytes | None
         Optional password for the private key.
+    certify : bool
+        When True, this call asserts (rather than constructs) that
+        *pdf_bytes* is a DocMDP certification signature per ISO 32000-1
+        12.8.2.3: its first /AcroForm signature field must already carry
+        a /Reference /DocMDP transform whose /P matches
+        ``docmdp_permission`` -- build that structure at render time
+        with ``build_sig_field_dict(..., certify=True, ...)`` or
+        ``build_certifying_signature``. Verification requires
+        ``pip install emboss-pdf[verify]`` (pikepdf), in addition to
+        ``[signing]``.
+    docmdp_permission : int
+        The /DocMDP /P value this signature is expected to certify with
+        (1 = no further changes, 2 = fill forms + sign, 3 = + annotate).
+        Only consulted when ``certify=True``.
 
     Returns
     -------
@@ -201,16 +435,19 @@ def sign_pdf(
     """
     try:
         from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.asymmetric import padding  # noqa: F401
         from cryptography.x509 import load_pem_x509_certificate
         from cryptography.hazmat.primitives.serialization import pkcs7
     except ImportError:
         raise ImportError(
             "Digital signing requires the 'cryptography' package.\n"
-            "  pip install emboss[signing]"
+            "  pip install emboss-pdf[signing]"
         ) from None
 
     from pathlib import Path
+
+    if certify:
+        _verify_docmdp_certification(pdf_bytes, docmdp_permission)
 
     key_data = Path(private_key_path).read_bytes()
     cert_data = Path(cert_path).read_bytes()
@@ -218,14 +455,17 @@ def sign_pdf(
     private_key = serialization.load_pem_private_key(key_data, password=password)
     certificate = load_pem_x509_certificate(cert_data)
 
-    # Find the /Contents placeholder in the PDF
-    placeholder = b"\x00" * 8192
+    # Find the /Contents placeholder: bytes assigned directly into a
+    # PdfDict always serialize as an ASCII hex string (pdf.objects.
+    # serialize), so the zero-filled placeholder is a run of ASCII '0'
+    # characters bracketed by '<'/'>', not raw NUL bytes.
+    placeholder = _CONTENTS_HEX_PLACEHOLDER
     start = pdf_bytes.find(placeholder)
     if start == -1:
         raise ValueError("No signature placeholder found in the PDF")
 
-    # The signed data is everything except the placeholder
-    data_to_sign = pdf_bytes[:start] + pdf_bytes[start + len(placeholder):]
+    # The signed data is everything except the placeholder.
+    data_to_sign = pdf_bytes[:start] + pdf_bytes[start + len(placeholder) :]
 
     # Create PKCS#7 signature
     signature = (
@@ -235,15 +475,19 @@ def sign_pdf(
         .sign(serialization.Encoding.DER, [pkcs7.PKCS7Options.DetachedSignature])
     )
 
-    if len(signature) > len(placeholder):
+    max_hex_chars = _CONTENTS_PLACEHOLDER_BYTES * 2
+    signature_hex = signature.hex().upper().encode("ascii")
+    if len(signature_hex) > max_hex_chars:
         raise ValueError(
             f"Signature ({len(signature)} bytes) exceeds placeholder "
-            f"({len(placeholder)} bytes)"
+            f"({_CONTENTS_PLACEHOLDER_BYTES} bytes)"
         )
 
-    # Pad signature to placeholder size and inject
-    padded = signature + b"\x00" * (len(placeholder) - len(signature))
-    signed = pdf_bytes[:start] + padded + pdf_bytes[start + len(placeholder):]
+    # Pad the hex-encoded signature to the placeholder's exact byte
+    # length so no other offset in the file (e.g. the xref table) shifts.
+    padded_hex = signature_hex + b"0" * (max_hex_chars - len(signature_hex))
+    new_contents = b"<" + padded_hex + b">"
+    signed = pdf_bytes[:start] + new_contents + pdf_bytes[start + len(placeholder) :]
 
     return signed
 

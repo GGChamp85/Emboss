@@ -13,9 +13,12 @@ a single measurement.
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-__all__ = ["Style", "StyleSheet", "resolve_preset", "PRESETS"]
+if TYPE_CHECKING:
+    from .brandkit import BrandKit
+
+__all__ = ["Style", "StyleSheet", "resolve_preset", "PRESETS", "apply_brand"]
 
 Alignment = Literal["left", "center", "right", "justify"]
 
@@ -120,6 +123,8 @@ class StyleSheet:
     table_cell_padding_y: float = 4.5
     table_stripe_color: str = "f5f5f4"
     rule_color: str = "d6d3d1"
+    # Optional baseline grid pitch in points; None disables snapping.
+    baseline_grid: float | None = None
 
     def for_heading(self, level: int) -> Style:
         return getattr(self, f"h{level}")
@@ -141,6 +146,7 @@ def _sheet(
     scale: tuple,
     color: str = "1a1a1a",
     heading_color: str = "111111",
+    h1_color: str | None = None,
     **extra,
 ) -> StyleSheet:
     """Build a stylesheet from a type scale.
@@ -164,6 +170,8 @@ def _sheet(
             keep_with_next=True,
             hyphenate=False,
         )
+    if h1_color is not None:
+        headings["h1"] = replace(headings["h1"], color=h1_color)
 
     return StyleSheet(
         name=name,
@@ -222,7 +230,8 @@ def _sheet(
 
 
 PRESETS: dict = {
-    # Contracts, pleadings, briefs: serif, justified, generous leading.
+    # Contracts, pleadings, briefs: conservative serif, justified,
+    # generous leading; deep navy headings over warm gray rules.
     "legal": _sheet(
         name="legal",
         body_font="Times",
@@ -231,10 +240,14 @@ PRESETS: dict = {
         align="justify",
         line_height=1.5,
         scale=(1.35, 1.18, 1.05, 1.0, 1.0, 1.0),
-        table_rule_color="d4d0c8",
-        table_header_rule_color="2b2b2b",
+        heading_color="1a2744",
+        table_rule_color="d6d0c4",
+        table_header_rule_color="4a4237",
+        table_stripe_color="f7f5f0",
+        rule_color="d6d0c4",
     ),
-    # Reports and filings: sans, left-aligned, tight tabular feel.
+    # Reports and filings: sans, tight tabular feel; dark slate
+    # headings with a restrained blue accent on table header rules.
     "finance": _sheet(
         name="finance",
         body_font="Helvetica",
@@ -243,12 +256,14 @@ PRESETS: dict = {
         align="left",
         line_height=1.4,
         scale=(1.6, 1.32, 1.14, 1.0, 1.0, 1.0),
-        heading_color="0f172a",
-        table_rule_color="cbd5e1",
-        table_header_rule_color="0f172a",
-        table_stripe_color="f8fafc",
+        heading_color="26303b",
+        table_rule_color="c9d2da",
+        table_header_rule_color="1f4e79",
+        table_stripe_color="f4f6f8",
+        rule_color="c9d2da",
     ),
-    # Papers and dissertations: serif body, sans headings, justified.
+    # Papers and dissertations: serif body, sans headings, justified;
+    # burgundy h1 against otherwise near-black headings.
     "academic": _sheet(
         name="academic",
         body_font="Times",
@@ -257,29 +272,79 @@ PRESETS: dict = {
         align="justify",
         line_height=1.48,
         scale=(1.6, 1.35, 1.15, 1.0, 1.0, 1.0),
+        heading_color="1f1f1f",
+        h1_color="6b1f2a",
+        table_rule_color="d5d0c9",
+        table_header_rule_color="3d3a36",
+        table_stripe_color="f4f2ef",
+        rule_color="d5d0c9",
     ),
-    # Memos, policies, manuals: sans, readable, roomy.
+    # Memos, policies, manuals: sans, roomy leading; deep sea-blue
+    # headings with a teal accent on rules.
     "corporate": _sheet(
         name="corporate",
         body_font="Helvetica",
         heading_font="Helvetica",
         body_size=10.5,
         align="left",
-        line_height=1.45,
+        line_height=1.5,
         scale=(1.55, 1.3, 1.12, 1.0, 1.0, 1.0),
-        heading_color="1c1917",
+        heading_color="0f3d5c",
+        table_rule_color="cfdbd6",
+        table_header_rule_color="1f8a70",
+        table_stripe_color="eef6f2",
+        rule_color="1f8a70",
     ),
-    # Data-heavy exports: compact, minimal ornament.
+    # Data-heavy exports: monochrome by design; hairline rules,
+    # smallest sizes, most whitespace.
     "minimal": _sheet(
         name="minimal",
         body_font="Helvetica",
         heading_font="Helvetica",
         body_size=9.5,
         align="left",
-        line_height=1.35,
+        line_height=1.55,
         scale=(1.4, 1.2, 1.08, 1.0, 1.0, 1.0),
-        table_rule_width=0.4,
-        table_stripe_color="fafaf9",
+        heading_color="1a1a1a",
+        table_rule_width=0.3,
+        table_header_rule_width=0.6,
+        table_rule_color="e5e5e5",
+        table_header_rule_color="1a1a1a",
+        table_stripe_color="fafafa",
+        rule_color="e5e5e5",
+    ),
+    # Journals and periodicals: serif throughout, justified, compact
+    # measure; muted forest accent on headings and header rules.
+    "journal": _sheet(
+        name="journal",
+        body_font="Times",
+        heading_font="Times",
+        body_size=10.5,
+        align="justify",
+        line_height=1.46,
+        scale=(1.5, 1.28, 1.12, 1.0, 1.0, 1.0),
+        heading_color="2d4a3a",
+        table_rule_color="d8ddd9",
+        table_header_rule_color="2d4a3a",
+        table_stripe_color="f3f6f4",
+        rule_color="d8ddd9",
+    ),
+    # Executive briefs: sans, oversized h1 in a strong brick accent,
+    # warm-tinted zebra stripes for scannable tables.
+    "brief": _sheet(
+        name="brief",
+        body_font="Helvetica",
+        heading_font="Helvetica",
+        body_size=10.5,
+        align="left",
+        line_height=1.42,
+        scale=(1.9, 1.4, 1.16, 1.0, 1.0, 1.0),
+        heading_color="1f2933",
+        h1_color="b7452c",
+        table_rule_color="d8d3d0",
+        table_header_rule_color="b7452c",
+        table_stripe_color="faf0ec",
+        rule_color="b7452c",
     ),
 }
 
@@ -293,3 +358,44 @@ def resolve_preset(name: str) -> StyleSheet:
         raise KeyError(
             f"unknown style preset {name!r}; available: {available}"
         ) from None
+
+
+def apply_brand(sheet: StyleSheet, brand: "BrandKit") -> StyleSheet:
+    """Return a new StyleSheet with the brand's colors and fonts layered on.
+
+    Headings take the primary, table-header rules the accent, body the ink,
+    and secondary text and rule tints the muted color. Text roles whose brand
+    color fails 4.5:1 on white are darkened to a text-safe variant, while the
+    raw brand color is kept for fills and rules. The input sheet is not
+    mutated.
+    """
+    from .brandkit import darken_to_contrast, resolve_font
+
+    heading_color = darken_to_contrast(brand.primary)
+    body_color = darken_to_contrast(brand.ink)
+    muted_text = darken_to_contrast(brand.muted)
+    heading_font = resolve_font(brand.heading_font)
+    body_font = resolve_font(brand.body_font)
+
+    def restyle(style: Style, color: str | None, font: str | None) -> Style:
+        changes: dict = {"color": color}
+        if font is not None:
+            changes["font_family"] = font
+        return replace(style, **changes)
+
+    changes: dict = {
+        "name": f"{sheet.name}+{brand.name}",
+        "body": restyle(sheet.body, body_color, body_font),
+        "table_header": restyle(sheet.table_header, heading_color, heading_font),
+        "table_cell": restyle(sheet.table_cell, sheet.table_cell.color, body_font),
+        "caption": restyle(sheet.caption, muted_text, body_font),
+        "header_footer": restyle(sheet.header_footer, muted_text, body_font),
+        # Fills and rules keep the raw brand color; only text roles are guarded.
+        "table_header_rule_color": brand.accent,
+        "table_rule_color": brand.muted,
+        "rule_color": brand.muted,
+    }
+    for level in range(1, 7):
+        style = getattr(sheet, f"h{level}")
+        changes[f"h{level}"] = restyle(style, heading_color, heading_font)
+    return replace(sheet, **changes)

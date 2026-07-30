@@ -62,6 +62,7 @@ class BibliographyBlock:
     title: str | None = "References"
     heading_level: int = 2
     style: object | None = None
+    id: str | None = None
 
     @property
     def structure_tag(self) -> str:
@@ -105,8 +106,7 @@ def _format_authors_apa(authors: list) -> str:
     return ", ".join(parts[:-1]) + ", & " + parts[-1]
 
 
-def format_citation(citation: Citation, style: str = "ieee",
-                    number: int = 1) -> str:
+def format_citation(citation: Citation, style: str = "ieee", number: int = 1) -> str:
     if style in ("ieee", "numbered"):
         return _format_ieee(citation, number)
     if style == "apa":
