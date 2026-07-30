@@ -14,7 +14,7 @@ Usage:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -32,18 +32,31 @@ class RefEntry:
     text: str
     anchor: str
     element_index: int
+    display: str | None = None
 
     @property
     def label(self) -> str:
-        return f"{self.kind} {self.number}"
+        return f"{self.kind} {self.display or self.number}"
+
+    @property
+    def ref_label(self) -> str:
+        """In-text reference label; equations resolve to a bare ``(n)``."""
+        if self.kind == "Equation":
+            return f"({self.display or self.number})"
+        return self.label
 
 
 class CrossReferenceIndex:
     """Builds and resolves cross-references for a document."""
 
-    def __init__(self, document: "Document") -> None:
+    def __init__(
+        self,
+        document: "Document",
+        section_numbers: dict[int, str] | None = None,
+    ) -> None:
         self._entries: dict[str, RefEntry] = {}
         self._counters: dict[str, int] = {}
+        self._section_numbers = dict(section_numbers or {})
         self._build(document)
 
     def _build(self, document: "Document") -> None:
@@ -55,9 +68,12 @@ class CrossReferenceIndex:
                 if anchor:
                     num = self._next("Section")
                     self._entries[anchor] = RefEntry(
-                        kind="Section", number=num,
-                        text=element.text, anchor=anchor,
+                        kind="Section",
+                        number=num,
+                        text=element.text,
+                        anchor=anchor,
                         element_index=idx,
+                        display=self._section_numbers.get(idx),
                     )
 
             elif isinstance(element, Table):
@@ -66,8 +82,10 @@ class CrossReferenceIndex:
                     num = self._next("Table")
                     label = getattr(element, "label", None) or f"tbl:{num}"
                     self._entries[label] = RefEntry(
-                        kind="Table", number=num,
-                        text=caption, anchor=label,
+                        kind="Table",
+                        number=num,
+                        text=caption,
+                        anchor=label,
                         element_index=idx,
                     )
 
@@ -78,8 +96,10 @@ class CrossReferenceIndex:
                     num = self._next("Figure")
                     label = getattr(element, "label", None) or f"fig:{num}"
                     self._entries[label] = RefEntry(
-                        kind="Figure", number=num,
-                        text=caption or alt, anchor=label,
+                        kind="Figure",
+                        number=num,
+                        text=caption or alt,
+                        anchor=label,
                         element_index=idx,
                     )
 
@@ -89,19 +109,25 @@ class CrossReferenceIndex:
                     num = self._next("Figure")
                     label = getattr(element, "label", None) or f"chart:{num}"
                     self._entries[label] = RefEntry(
-                        kind="Figure", number=num,
-                        text=title, anchor=label,
+                        kind="Figure",
+                        number=num,
+                        text=title,
+                        anchor=label,
                         element_index=idx,
                     )
 
             elif isinstance(element, MathBlock):
                 caption = getattr(element, "caption", None)
-                if caption:
+                wants_number = getattr(element, "number", False)
+                explicit = getattr(element, "label", None)
+                if caption or wants_number or explicit:
                     num = self._next("Equation")
-                    label = getattr(element, "label", None) or f"eq:{num}"
+                    label = explicit or f"eq:{num}"
                     self._entries[label] = RefEntry(
-                        kind="Equation", number=num,
-                        text=caption, anchor=label,
+                        kind="Equation",
+                        number=num,
+                        text=caption or "",
+                        anchor=label,
                         element_index=idx,
                     )
 
@@ -111,8 +137,10 @@ class CrossReferenceIndex:
                     num = self._next("Listing")
                     label = getattr(element, "label", None) or f"lst:{num}"
                     self._entries[label] = RefEntry(
-                        kind="Listing", number=num,
-                        text=caption, anchor=label,
+                        kind="Listing",
+                        number=num,
+                        text=caption,
+                        anchor=label,
                         element_index=idx,
                     )
 
@@ -122,8 +150,10 @@ class CrossReferenceIndex:
                     num = self._next("Figure")
                     label = getattr(element, "label", None) or f"svg:{num}"
                     self._entries[label] = RefEntry(
-                        kind="Figure", number=num,
-                        text=caption, anchor=label,
+                        kind="Figure",
+                        number=num,
+                        text=caption,
+                        anchor=label,
                         element_index=idx,
                     )
 
@@ -165,10 +195,12 @@ class CrossReferenceIndex:
     def resolve_text(self, text: str) -> str:
         """Replace ``@key`` references in text with their resolved labels."""
         import re
+
         def _replace(match):
             key = match.group(1)
             entry = self._entries.get(key)
             if entry:
                 return entry.label
             return match.group(0)
+
         return re.sub(r"@([\w:.-]+)", _replace, text)
