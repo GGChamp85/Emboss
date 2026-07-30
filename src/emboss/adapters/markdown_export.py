@@ -26,6 +26,7 @@ def to_markdown(document: "Document", *, include_metadata: bool = True) -> str:
         Callout,
         Chart,
         CodeBlock,
+        DocumentControl,
         Footnote,
         Heading,
         HorizontalRule,
@@ -91,7 +92,7 @@ def to_markdown(document: "Document", *, include_metadata: bool = True) -> str:
             if element.title:
                 parts.append(f"**{element.title}**")
                 parts.append("")
-            headers = [str(l) for l in element.labels]
+            headers = [str(lab) for lab in element.labels]
             values = [str(v) for v in element.values]
             parts.append("| " + " | ".join(headers) + " |")
             parts.append("| " + " | ".join("---" for _ in headers) + " |")
@@ -131,6 +132,7 @@ def to_markdown(document: "Document", *, include_metadata: bool = True) -> str:
 
         elif isinstance(element, BibliographyBlock):
             from ..bibliography import format_bibliography
+
             if element.title:
                 prefix = "#" * element.heading_level
                 parts.append(f"{prefix} {element.title}")
@@ -147,6 +149,14 @@ def to_markdown(document: "Document", *, include_metadata: bool = True) -> str:
         elif isinstance(element, PageBreak):
             parts.append("\\newpage")
             parts.append("")
+
+        elif isinstance(element, DocumentControl):
+            for sub in element.to_blocks():
+                if isinstance(sub, Table):
+                    parts.append(_render_table_md(sub))
+                else:
+                    parts.append(_render_runs_md(sub.runs))
+                parts.append("")
 
     return "\n".join(parts).rstrip() + "\n"
 

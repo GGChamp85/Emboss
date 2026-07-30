@@ -23,65 +23,163 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 __all__ = [
-    "resolve_color", "PALETTES", "ColorTheme",
-    "CmykColor", "SpotColor", "rgb_to_cmyk", "parse_cmyk",
+    "resolve_color",
+    "PALETTES",
+    "ColorTheme",
+    "CmykColor",
+    "SpotColor",
+    "rgb_to_cmyk",
+    "cmyk_to_rgb",
+    "hex_to_cmyk",
+    "parse_cmyk",
+    "parse_spot",
+    "spot_resource_name",
+    "build_spot_color_resource",
 ]
 
 PALETTES: dict[str, dict[str, str]] = {
     "slate": {
-        "50": "f8fafc", "100": "f1f5f9", "200": "e2e8f0", "300": "cbd5e1",
-        "400": "94a3b8", "500": "64748b", "600": "475569", "700": "334155",
-        "800": "1e293b", "900": "0f172a", "950": "020617",
+        "50": "f8fafc",
+        "100": "f1f5f9",
+        "200": "e2e8f0",
+        "300": "cbd5e1",
+        "400": "94a3b8",
+        "500": "64748b",
+        "600": "475569",
+        "700": "334155",
+        "800": "1e293b",
+        "900": "0f172a",
+        "950": "020617",
     },
     "gray": {
-        "50": "f9fafb", "100": "f3f4f6", "200": "e5e7eb", "300": "d1d5db",
-        "400": "9ca3af", "500": "6b7280", "600": "4b5563", "700": "374151",
-        "800": "1f2937", "900": "111827", "950": "030712",
+        "50": "f9fafb",
+        "100": "f3f4f6",
+        "200": "e5e7eb",
+        "300": "d1d5db",
+        "400": "9ca3af",
+        "500": "6b7280",
+        "600": "4b5563",
+        "700": "374151",
+        "800": "1f2937",
+        "900": "111827",
+        "950": "030712",
     },
     "red": {
-        "50": "fef2f2", "100": "fee2e2", "200": "fecaca", "300": "fca5a5",
-        "400": "f87171", "500": "ef4444", "600": "dc2626", "700": "b91c1c",
-        "800": "991b1b", "900": "7f1d1d", "950": "450a0a",
+        "50": "fef2f2",
+        "100": "fee2e2",
+        "200": "fecaca",
+        "300": "fca5a5",
+        "400": "f87171",
+        "500": "ef4444",
+        "600": "dc2626",
+        "700": "b91c1c",
+        "800": "991b1b",
+        "900": "7f1d1d",
+        "950": "450a0a",
     },
     "orange": {
-        "50": "fff7ed", "100": "ffedd5", "200": "fed7aa", "300": "fdba74",
-        "400": "fb923c", "500": "f97316", "600": "ea580c", "700": "c2410c",
-        "800": "9a3412", "900": "7c2d12", "950": "431407",
+        "50": "fff7ed",
+        "100": "ffedd5",
+        "200": "fed7aa",
+        "300": "fdba74",
+        "400": "fb923c",
+        "500": "f97316",
+        "600": "ea580c",
+        "700": "c2410c",
+        "800": "9a3412",
+        "900": "7c2d12",
+        "950": "431407",
     },
     "amber": {
-        "50": "fffbeb", "100": "fef3c7", "200": "fde68a", "300": "fcd34d",
-        "400": "fbbf24", "500": "f59e0b", "600": "d97706", "700": "b45309",
-        "800": "92400e", "900": "78350f", "950": "451a03",
+        "50": "fffbeb",
+        "100": "fef3c7",
+        "200": "fde68a",
+        "300": "fcd34d",
+        "400": "fbbf24",
+        "500": "f59e0b",
+        "600": "d97706",
+        "700": "b45309",
+        "800": "92400e",
+        "900": "78350f",
+        "950": "451a03",
     },
     "green": {
-        "50": "f0fdf4", "100": "dcfce7", "200": "bbf7d0", "300": "86efac",
-        "400": "4ade80", "500": "22c55e", "600": "16a34a", "700": "15803d",
-        "800": "166534", "900": "14532d", "950": "052e16",
+        "50": "f0fdf4",
+        "100": "dcfce7",
+        "200": "bbf7d0",
+        "300": "86efac",
+        "400": "4ade80",
+        "500": "22c55e",
+        "600": "16a34a",
+        "700": "15803d",
+        "800": "166534",
+        "900": "14532d",
+        "950": "052e16",
     },
     "blue": {
-        "50": "eff6ff", "100": "dbeafe", "200": "bfdbfe", "300": "93c5fd",
-        "400": "60a5fa", "500": "3b82f6", "600": "2563eb", "700": "1d4ed8",
-        "800": "1e40af", "900": "1e3a8a", "950": "172554",
+        "50": "eff6ff",
+        "100": "dbeafe",
+        "200": "bfdbfe",
+        "300": "93c5fd",
+        "400": "60a5fa",
+        "500": "3b82f6",
+        "600": "2563eb",
+        "700": "1d4ed8",
+        "800": "1e40af",
+        "900": "1e3a8a",
+        "950": "172554",
     },
     "indigo": {
-        "50": "eef2ff", "100": "e0e7ff", "200": "c7d2fe", "300": "a5b4fc",
-        "400": "818cf8", "500": "6366f1", "600": "4f46e5", "700": "4338ca",
-        "800": "3730a3", "900": "312e81", "950": "1e1b4b",
+        "50": "eef2ff",
+        "100": "e0e7ff",
+        "200": "c7d2fe",
+        "300": "a5b4fc",
+        "400": "818cf8",
+        "500": "6366f1",
+        "600": "4f46e5",
+        "700": "4338ca",
+        "800": "3730a3",
+        "900": "312e81",
+        "950": "1e1b4b",
     },
     "purple": {
-        "50": "faf5ff", "100": "f3e8ff", "200": "e9d5ff", "300": "d8b4fe",
-        "400": "c084fc", "500": "a855f7", "600": "9333ea", "700": "7e22ce",
-        "800": "6b21a8", "900": "581c87", "950": "3b0764",
+        "50": "faf5ff",
+        "100": "f3e8ff",
+        "200": "e9d5ff",
+        "300": "d8b4fe",
+        "400": "c084fc",
+        "500": "a855f7",
+        "600": "9333ea",
+        "700": "7e22ce",
+        "800": "6b21a8",
+        "900": "581c87",
+        "950": "3b0764",
     },
     "pink": {
-        "50": "fdf2f8", "100": "fce7f3", "200": "fbcfe8", "300": "f9a8d4",
-        "400": "f472b6", "500": "ec4899", "600": "db2777", "700": "be185d",
-        "800": "9d174d", "900": "831843", "950": "500724",
+        "50": "fdf2f8",
+        "100": "fce7f3",
+        "200": "fbcfe8",
+        "300": "f9a8d4",
+        "400": "f472b6",
+        "500": "ec4899",
+        "600": "db2777",
+        "700": "be185d",
+        "800": "9d174d",
+        "900": "831843",
+        "950": "500724",
     },
     "teal": {
-        "50": "f0fdfa", "100": "ccfbf1", "200": "99f6e4", "300": "5eead4",
-        "400": "2dd4bf", "500": "14b8a6", "600": "0d9488", "700": "0f766e",
-        "800": "115e59", "900": "134e4a", "950": "042f2e",
+        "50": "f0fdfa",
+        "100": "ccfbf1",
+        "200": "99f6e4",
+        "300": "5eead4",
+        "400": "2dd4bf",
+        "500": "14b8a6",
+        "600": "0d9488",
+        "700": "0f766e",
+        "800": "115e59",
+        "900": "134e4a",
+        "950": "042f2e",
     },
 }
 
@@ -99,22 +197,30 @@ _SEMANTIC: dict[str, str] = {
     "accent": "indigo-600",
 }
 
-import re
+import re  # noqa: E402
 
 _HEX_RE = re.compile(r"^[0-9a-fA-F]{6}$")
 _NAMED_RE = re.compile(r"^([a-z]+)-(\d{2,3})$")
 
 
-def resolve_color(value: str) -> str:
-    """Resolve a named color to a hex string.
+def resolve_color(value: str) -> str | CmykColor | SpotColor:
+    """Resolve a named color to a hex string, CmykColor, or SpotColor.
 
     Accepts:
       - A 6-digit hex string (pass-through): ``"2563eb"``
       - A named shade: ``"blue-600"`` -> ``"2563eb"``
       - A semantic name: ``"primary"`` -> ``"2563eb"``
-
-    Returns the 6-digit hex color without ``#``.
+      - A CMYK spec: ``"cmyk(0,100,100,0)"`` -> ``CmykColor``
+      - A spot spec: ``"spot(PANTONE 485 C,0,100,95,0)"`` -> ``SpotColor``
     """
+    if value.startswith("cmyk("):
+        cmyk = parse_cmyk(value)
+        if cmyk is not None:
+            return cmyk
+    if value.startswith("spot("):
+        spot = parse_spot(value)
+        if spot is not None:
+            return spot
     if _HEX_RE.match(value):
         return value.lower()
 
@@ -163,6 +269,7 @@ class ColorTheme:
 # CMYK and spot color support
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class CmykColor:
     """A color in the CMYK color space.
@@ -176,12 +283,9 @@ class CmykColor:
     k: float
 
     def __post_init__(self) -> None:
-        for name, val in [("c", self.c), ("m", self.m),
-                          ("y", self.y), ("k", self.k)]:
+        for name, val in [("c", self.c), ("m", self.m), ("y", self.y), ("k", self.k)]:
             if not (0.0 <= val <= 1.0):
-                raise ValueError(
-                    f"CMYK component {name} must be 0.0-1.0, got {val}"
-                )
+                raise ValueError(f"CMYK component {name} must be 0.0-1.0, got {val}")
 
     @property
     def components(self) -> tuple[float, float, float, float]:
@@ -222,6 +326,11 @@ def rgb_to_cmyk(r: float, g: float, b: float) -> CmykColor:
     return CmykColor(c, m, y_val, k)
 
 
+def cmyk_to_rgb(c: float, m: float, y: float, k: float) -> tuple[float, float, float]:
+    """Convert CMYK components (0.0-1.0) to an RGB triple (0.0-1.0)."""
+    return ((1.0 - c) * (1.0 - k), (1.0 - m) * (1.0 - k), (1.0 - y) * (1.0 - k))
+
+
 def hex_to_cmyk(hex_color: str) -> CmykColor:
     """Convert a 6-digit hex RGB color to CMYK."""
     text = hex_color.lstrip("#")
@@ -258,8 +367,37 @@ def parse_cmyk(value: str) -> CmykColor | None:
     return CmykColor(*components)
 
 
-def build_spot_color_resource(assembler, name: str,
-                              c: float, m: float, y: float, k: float) -> str:
+_SPOT_RE = re.compile(
+    r"^spot\(\s*([^,()]+?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,"
+    r"\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\)$"
+)
+
+
+def parse_spot(value: str) -> SpotColor | None:
+    """Parse a ``spot(Name,c,m,y,k)`` string into a SpotColor.
+
+    Component values may be 0-100 (percentage) or 0.0-1.0 (fraction),
+    same auto-detection as :func:`parse_cmyk`. Returns None if the
+    string is not a spot color specification.
+    """
+    match = _SPOT_RE.match(value.strip())
+    if not match:
+        return None
+    components = [float(match.group(i)) for i in range(2, 6)]
+    if any(v > 1.0 for v in components):
+        components = [v / 100.0 for v in components]
+    return SpotColor(match.group(1), *components)
+
+
+def spot_resource_name(name: str) -> str:
+    """Derive the deterministic ColorSpace resource name for a spot color."""
+    safe = re.sub(r"[^A-Za-z0-9]", "", name)
+    return f"CS{safe}" if safe else "CS0"
+
+
+def build_spot_color_resource(
+    assembler, name: str, c: float, m: float, y: float, k: float
+) -> tuple:
     """Register a spot color as a PDF Separation color space.
 
     Creates a ``/ColorSpace`` entry with a ``/Separation`` array that
@@ -284,15 +422,14 @@ def build_spot_color_resource(assembler, name: str,
     func_stream = PdfStream(data=func_code, dictionary=func_dict, compress=False)
     func_ref = assembler.add(func_stream)
 
-    cs_array = PdfArray([
-        PdfName("Separation"),
-        PdfName(name),
-        PdfName("DeviceCMYK"),
-        func_ref,
-    ])
+    cs_array = PdfArray(
+        [
+            PdfName("Separation"),
+            PdfName(name),
+            PdfName("DeviceCMYK"),
+            func_ref,
+        ]
+    )
     cs_ref = assembler.add(cs_array)
 
-    # Return a sanitized resource name derived from the spot color name.
-    safe = re.sub(r"[^A-Za-z0-9]", "", name)
-    resource_name = f"CS{safe}" if safe else "CS0"
-    return resource_name, cs_ref
+    return spot_resource_name(name), cs_ref
