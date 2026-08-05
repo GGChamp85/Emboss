@@ -1206,7 +1206,7 @@ def generate(
         output: Optional file path to save the PDF
         provider: LLM provider ("anthropic", "openai", or "novita")
         model: Model name (defaults to claude-sonnet-5, gpt-4o, or
-            deepseek/deepseek-v4-pro)
+            moonshotai/kimi-k3)
         api_key: API key (or set ANTHROPIC_API_KEY / OPENAI_API_KEY /
             NOVITA_API_KEY env var)
         smart: Apply content intelligence to the parsed spec
@@ -1231,7 +1231,7 @@ def generate(
     elif provider == "openai":
         call, model = _call_openai, model or "gpt-4o"
     elif provider == "novita":
-        call, model = _call_novita, model or "deepseek/deepseek-v4-pro"
+        call, model = _call_novita, model or "moonshotai/kimi-k3"
     else:
         raise ValueError(
             f"Unknown provider: {provider!r}. Use 'anthropic', 'openai', or 'novita'."

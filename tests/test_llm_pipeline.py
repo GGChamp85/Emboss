@@ -244,7 +244,7 @@ class TestStructuredProviders:
         pytest.importorskip("pydantic")
         calls = _install_openai(monkeypatch, [json.dumps(VALID_SPEC)])
         result = _call_novita(
-            "p", "s", "deepseek/deepseek-v4-pro", "k", structured=True
+            "p", "s", "moonshotai/kimi-k3", "k", structured=True
         )
         assert result == json.dumps(VALID_SPEC)
         response_format = calls[0]["response_format"]
@@ -255,13 +255,13 @@ class TestStructuredProviders:
 
     def test_novita_unstructured_omits_response_format(self, monkeypatch):
         calls = _install_openai(monkeypatch, ["{}"])
-        _call_novita("p", "s", "deepseek/deepseek-v4-pro", "k", structured=False)
+        _call_novita("p", "s", "moonshotai/kimi-k3", "k", structured=False)
         assert "response_format" not in calls[0]
 
     def test_novita_uses_novita_base_url(self, monkeypatch):
         clients = []
         _install_openai(monkeypatch, ["{}"], clients=clients)
-        _call_novita("p", "s", "deepseek/deepseek-v4-pro", "k", structured=False)
+        _call_novita("p", "s", "moonshotai/kimi-k3", "k", structured=False)
         assert clients[0].base_url == "https://api.novita.ai/openai"
 
     def test_generate_structured_novita(self, monkeypatch):
@@ -270,7 +270,7 @@ class TestStructuredProviders:
         pdf = generate("Write it", provider="novita", api_key="k")
         assert pdf.startswith(b"%PDF")
         assert calls[0]["response_format"]["type"] == "json_schema"
-        assert calls[0]["model"] == "deepseek/deepseek-v4-pro"
+        assert calls[0]["model"] == "moonshotai/kimi-k3"
 
 
 class TestRepairLoop:
