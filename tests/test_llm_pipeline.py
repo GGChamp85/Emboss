@@ -243,9 +243,7 @@ class TestStructuredProviders:
     def test_novita_response_format_shape(self, monkeypatch):
         pytest.importorskip("pydantic")
         calls = _install_openai(monkeypatch, [json.dumps(VALID_SPEC)])
-        result = _call_novita(
-            "p", "s", "moonshotai/kimi-k3", "k", structured=True
-        )
+        result = _call_novita("p", "s", "moonshotai/kimi-k3", "k", structured=True)
         assert result == json.dumps(VALID_SPEC)
         response_format = calls[0]["response_format"]
         assert response_format["type"] == "json_schema"
